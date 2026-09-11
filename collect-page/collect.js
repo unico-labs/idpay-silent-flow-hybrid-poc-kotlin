@@ -47,8 +47,6 @@ async function prepareSilentCapture() {
 
   const camera = new UnicoCheckBuilder()
     .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
-    .setModelsPath('/models')
-    .setResourceDirectory('/resources')
     .build()
 
   camera.setSilentInfo(externalUserId, config.USE_CASE)

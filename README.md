@@ -8,7 +8,7 @@
 
 <div align="center">
 
-### POC de validação silenciosa de transações — app nativo abre Custom Tabs e a coleta de dados de device acontece via página web
+### Silent transaction validation POC — a native app opens Custom Tabs and the device data collection happens on a web page
 
 ![ANDROID](https://img.shields.io/badge/Android-grey?logo=android)
 ![WEB](https://img.shields.io/badge/Web-grey?logo=javascript)
@@ -16,92 +16,95 @@
 
 ---
 
-## 🎯 O que esta POC faz
+## 🎯 What this POC does
 
-Cenário: um app **nativo** abre uma página web em **Custom Tabs**, e é nessa página que acontece a coleta de dados de device:
+Scenario: a **native** app opens a web page in **Custom Tabs**, and the device data collection happens on that page:
 
-1. O app abre a página `collect-page/` em **Custom Tabs**, passando o `externalUserId` na URL. A única fricção visível é uma tela de loading.
-2. A página roda a **SDK Web** da Unico em modo silencioso: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **sem abrir a câmera**. A coleta de device sai em background; a página aguarda a janela de envio (5s) e devolve o controle ao app via deep link (`silentflowhybrid://done`).
-3. O app cria uma transação no IDPay (`POST /api/public/v1/credit/transaction`) com o **mesmo `externalUserId`** em `additionalInfo.externalUserID`. Em uma integração real essa chamada é feita pelo **backend do cliente** (server-to-server) — a POC encurta esse caminho chamando a API diretamente.
-4. Resultado:
-   - `status: approved` → **aprovação silenciosa**, sem nenhuma fricção adicional (tela verde);
-   - senão → o app abre o `link` de challenge automaticamente (Custom Tabs) e recebe o retorno via deep link.
+1. The app opens the `collect-page/` in **Custom Tabs**, passing the `externalUserId` in the URL. The only visible friction is a loading screen.
+2. The page runs the Unico **Web SDK** in silent mode: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **the camera is never opened**. The device data collection is sent in the background; the page waits for the upload window (5s) and returns control to the app via deep link (`silentflowhybrid://done`).
+3. The app creates an IDPay transaction (`POST /api/public/v1/credit/transaction`) with the **same `externalUserId`** in `additionalInfo.externalUserID`. In a real integration this request is made by the **client's backend** (server-to-server) — the POC shortcuts that hop and calls the API directly.
+4. Result:
+   - `status: approved` → **silent approval**, with no additional friction (green screen);
+   - otherwise → the app automatically opens the challenge `link` (Custom Tabs) and receives the return via deep link.
 
-O botão **Fluxo completo** roda tudo em sequência. A página de coleta é **estática** — sem npm, sem build: o bundle da SDK Web (`UnicoCheckBuilder.min.js`) está no repositório, no mesmo padrão da [POC vanilla](https://github.com/unico-labs/unico-sdk-poc-js-vanilla).
+The **"Fluxo completo"** (full flow) button runs everything in sequence. The collect page is **static** — no npm, no build step: the Web SDK bundle (`UnicoCheckBuilder.min.js`) is committed to the repository, following the same pattern as the [vanilla POC](https://github.com/unico-labs/unico-sdk-poc-js-vanilla).
 
 <p align="center">
-  <img width="320" src="docs/screenshots/tela-principal.png" alt="Tela principal da POC">
+  <img width="320" src="docs/screenshots/tela-principal.png" alt="POC main screen">
 </p>
 
-> ⚠️ **Host da página**: a SDK Web valida o host **real** da página contra os hosts registrados na SDK Key e exige um contexto seguro do browser — em HTTP puro, só `localhost` funciona; qualquer outro host exige **HTTPS**. Por isso o teste local usa `localhost` + `adb reverse` (passo a passo abaixo).
+> ⚠️ **Page host**: the Web SDK validates the page's **real** host against the hosts registered for the SDK Key, and requires a browser secure context — over plain HTTP, only `localhost` qualifies; any other host requires **HTTPS**. That is why local testing uses `localhost` + `adb reverse` (step by step below).
 >
-> ⚠️ O `externalUserId` da coleta e o `additionalInfo.externalUserID` da transação precisam ser **idênticos, char a char**.
+> ⚠️ The `externalUserId` used in the collection and the `additionalInfo.externalUserID` sent in the transaction must be **identical, character by character**.
 >
-> ⚠️ A coleta tem **validade máxima de 5 minutos**: a transação precisa ser criada dentro dessa janela. As primeiras transações de um `externalUserId` retornam challenge — a aprovação silenciosa depende de histórico prévio no **mesmo device**.
+> ⚠️ The collection is **valid for at most 5 minutes**: the transaction must be created within that window. The first transactions of a given `externalUserId` return a challenge — silent approval depends on prior history on the **same device**.
 
 ---
 
-## 💻 Compatibilidade
+## 💻 Compatibility
 
-- **Android:** 7.0 (API nível 24) ou superior
+- **Android:** 7.0 (API level 24) or higher
 - **Kotlin:** 2.2
-- Qualquer servidor de arquivos estáticos para a página (ex.: `python3 -m http.server`)
+- Any static file server for the page (e.g. `python3 -m http.server`)
 
 ---
 
-## ⚙️ Configuração antes de rodar
+## ⚙️ Setup before running
 
-Este repositório **não contém nenhuma credencial real**. Substitua os placeholders:
+This repository **contains no real credentials**. Replace the placeholders:
 
-| Onde | O que trocar | Valor |
+| Where | What to replace | Value |
 | --- | --- | --- |
-| `collect-page/config.js` | `SDK_KEY` | Sua **SDK Key Web** (by client), registrada para o host da página e com o envio de `silentInfo` habilitado |
-| `app/.../PocConfig.kt` | `COMPANY_ID` | O UUID da sua company no IDPay |
-| `app/.../PocConfig.kt` | `COLLECT_PAGE_URL` | Onde a página está servida (default `http://localhost:3000`) |
+| `collect-page/config.js` | `SDK_KEY` | Your **Web SDK Key** (by client mode), registered for the page host and with `silentInfo` sending enabled |
+| `app/.../PocConfig.kt` | `COMPANY_ID` | Your IDPay company UUID |
+| `app/.../PocConfig.kt` | `COLLECT_PAGE_URL` | Where the page is served (default `http://localhost:3000`) |
 
-O **access token (Bearer)** **não é hardcoded** — cole-o no campo "Bearer token" da tela antes de rodar, já que costuma ter validade curta.
+The **access token (Bearer)** is **not hardcoded** — paste it into the "Bearer token" field on the screen before running, since it usually has a short lifetime.
 
-Para gerar as credenciais Unico, consulte a [documentação oficial](https://developer.unico.io/).
+To generate Unico credentials, see the [official documentation](https://developer.unico.io/).
 
 ---
 
-## ▶️ Rodando o teste (local)
+## ▶️ Running the test (local)
 
-**1. Sirva a página de coleta** (na raiz do repositório):
+**1. Serve the collect page** (from the repository root):
 
 ```bash
 cd collect-page
 python3 -m http.server 3000
 ```
 
-**2. Túnel adb** (com o emulador/device conectado) — faz o `localhost:3000` do device apontar para a sua máquina:
+**2. adb tunnel** (with the emulator/device connected) — makes the device's `localhost:3000` point to your machine:
 
 ```bash
 adb reverse tcp:3000 tcp:3000
 ```
 
-> Refaça este comando se o device/emulador reiniciar. Ele é necessário porque a
-> SDK Key local é registrada para `localhost` — o único host que o browser
-> considera seguro sem HTTPS.
+> Run this command again if the device/emulator restarts. It is needed because
+> the local SDK Key is registered for `localhost` — the only host the browser
+> treats as secure without HTTPS.
 
-**3. Instale e abra o app** (Android Studio ▶ ou `./gradlew installDebug`).
+**3. Install and open the app** (Android Studio ▶ or `./gradlew installDebug`).
 
-**4. Teste**: preencha os campos (ou mantenha os exemplos), cole o Bearer token e toque em **Fluxo completo** — Custom Tab com loading → retorno automático → transação → **Aprovado!** ou challenge.
+**4. Test**: fill in the fields (or keep the examples), paste the Bearer token and tap **"Fluxo completo"** (full flow) — Custom Tab with loading → automatic return → transaction → **approved** (green screen) or challenge.
 
-Smoke test da página sem o app: abra `http://localhost:3000/?externalUserId=teste` no browser do desktop e confira o painel de debug no rodapé.
+Smoke test of the page without the app: open `http://localhost:3000/?externalUserId=test` in your desktop browser and check the debug panel at the bottom.
 
 ---
 
-## 📁 Estrutura
+## 📁 Structure
 
 ```
-app/            # App Android nativo (abre a página e cria a transação)
-collect-page/   # Página estática de coleta (SDK Web em modo silencioso)
-  index.html    # Loading + retorno ao app
-  collect.js    # setSilentInfo + prepare (sem open) + grace + deep link
-  config.js     # SDK Key, ambiente, use case, deep link, grace
-  UnicoCheckBuilder.min.js  # Bundle da SDK Web (padrão da POC vanilla)
-  models/ resources/        # Assets da SDK Web
+app/            # Native Android app (opens the page and creates the transaction)
+collect-page/   # Static collect page (Web SDK in silent mode)
+  index.html    # Loading + return to the app
+  collect.js    # setSilentInfo + prepare (no open) + grace window + deep link
+  config.js     # SDK Key, environment, use case, deep link, grace window
+  UnicoCheckBuilder.min.js  # Web SDK bundle (same pattern as the vanilla POC)
 ```
 
-Em produção, a `collect-page/` é hospedada em um domínio **HTTPS** registrado na SDK Key (do cliente ou da Unico) — o app só troca a `COLLECT_PAGE_URL` e o `adb reverse` deixa de existir.
+> The silent flow does not need the SDK's additional resources (the FaceTec
+> files and models from step 4 of the installation guide) — those are only
+> required when the camera is opened for a capture journey.
+
+In production, the `collect-page/` is hosted on an **HTTPS** domain registered for the SDK Key (owned by the client or by Unico) — the app just changes `COLLECT_PAGE_URL`, and the `adb reverse` step goes away.
