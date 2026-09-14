@@ -14,6 +14,7 @@ const debugEl = document.getElementById('debug')
 const params = new URLSearchParams(window.location.search)
 const externalUserId = params.get('externalUserId') || ''
 
+
 // Transient network error while verifying the key — worth retrying.
 const RETRYABLE_CODE = 73402
 const MAX_ATTEMPTS = 3
@@ -68,9 +69,12 @@ async function run() {
     try {
       await prepareSilentCapture()
       debug('prepare: ok')
-      // Grace period so the fire-and-forget upload leaves before the page
-      // closes.
-      await new Promise((resolve) => setTimeout(resolve, config.GRACE_MS))
+      // Single wait after the prepare: the uMonitor upload (sdk-build) fires
+      // a few hundred ms after the prepare resolves, so the page holds this
+      // window before returning to the app.
+      debug(`holding ${config.POST_PREPARE_WAIT_MS}ms before returning`)
+      await new Promise((resolve) => setTimeout(resolve, config.POST_PREPARE_WAIT_MS))
+
       finish('ok', 'Tudo certo! Voltando ao app…')
       return
     } catch (error) {

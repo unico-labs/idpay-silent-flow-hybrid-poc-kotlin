@@ -16,7 +16,8 @@ export default {
   // Deep link that returns control to the native app.
   DEEP_LINK: 'silentflowhybrid://done',
 
-  // Grace period (ms) after the prepare for the SDK fire-and-forget upload to
-  // leave the device before the page redirects back to the app.
-  GRACE_MS: 5000,
+  // Single wait (ms) after the prepare resolves, before returning to the
+  // app. It's important to upload collect after the prepare,
+  // so the page holds this window for it to leave.
+  POST_PREPARE_WAIT_MS: 2500,
 }
