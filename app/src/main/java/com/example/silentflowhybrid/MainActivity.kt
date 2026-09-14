@@ -136,18 +136,26 @@ class MainActivity : AppCompatActivity() {
         addLog("deep link: status=$status")
 
         when (status) {
-            "ok" -> {
-                val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-                mainText.text = getString(R.string.status_collect_ready, ts)
-                if (runTransactionAfterCollect) {
-                    runTransactionAfterCollect = false
-                    createTransaction()
-                }
-            }
+            "ok" -> onCollectReturned()
             "error" -> {
                 mainText.text = getString(R.string.status_collect_failed)
                 runTransactionAfterCollect = false
             }
+        }
+    }
+
+    /**
+     * The collect page returned: the prepare succeeded and the page already
+     * held the post-prepare wait — the collection is sent and processed, so
+     * the transaction can be created right away.
+     */
+    private fun onCollectReturned() {
+        val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        mainText.text = getString(R.string.status_collect_ready, ts)
+
+        if (runTransactionAfterCollect) {
+            runTransactionAfterCollect = false
+            createTransaction()
         }
     }
 

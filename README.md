@@ -21,7 +21,7 @@
 Scenario: a **native** app opens a web page in **Custom Tabs**, and the device data collection happens on that page:
 
 1. The app opens the `collect-page/` in **Custom Tabs**, passing the `externalUserId` in the URL. The only visible friction is a loading screen.
-2. The page runs the Unico **Web SDK** in silent mode: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **the camera is never opened**. The device data collection is sent in the background; the page waits for the upload window (5s) and returns control to the app via deep link (`silentflowhybrid://done`).
+2. The page runs the Unico **Web SDK** in silent mode: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **the camera is never opened**. After the prepare resolves, the page waits `POST_PREPARE_WAIT_MS` (2.5s) and returns to the app via deep link (`silentflowhybrid://done`). See **Timing** below.
 3. The app creates an IDPay transaction (`POST /api/public/v1/credit/transaction`) with the **same `externalUserId`** in `additionalInfo.externalUserID`. In a real integration this request is made by the **client's backend** (server-to-server) — the POC shortcuts that hop and calls the API directly.
 4. Result:
    - `status: approved` → **silent approval**, with no additional friction (green screen);
@@ -65,13 +65,35 @@ To generate Unico credentials, see the [official documentation](https://develope
 
 ---
 
+## ⏱️ Timing
+
+Count the wait **after the `prepareSelfieCamera` promise resolves**. From that
+point, allow **at least 2.5 seconds** before creating the transaction:
+
+- **~1.5s** for the collection to be sent from the Custom Tab (the page must
+  stay open during this part);
+- the remaining **~1s** for the collection to be processed and become
+  available to the transaction validation.
+
+The POC implements this as a single wait on the page
+(`collect-page/config.js → POST_PREPARE_WAIT_MS`, default 2500ms).
+
+The user can wait less if the collection is triggered **earlier in the
+journey** (e.g. when entering the payment screen instead of at the confirm
+tap) — a collection stays **valid for 5 minutes** after it is generated.
+
+With these numbers, the full episode (open tab → back in the app) takes
+**3 to 5 seconds**, depending on device, network and other factors.
+
+---
+
 ## ▶️ Running the test (local)
 
 **1. Serve the collect page** (from the repository root):
 
 ```bash
 cd collect-page
-python3 -m http.server 3000
+python3 serve.py   # static server with caching disabled (port 3000)
 ```
 
 **2. adb tunnel** (with the emulator/device connected) — makes the device's `localhost:3000` point to your machine:
@@ -98,8 +120,9 @@ Smoke test of the page without the app: open `http://localhost:3000/?externalUse
 app/            # Native Android app (opens the page and creates the transaction)
 collect-page/   # Static collect page (Web SDK in silent mode)
   index.html    # Loading + return to the app
-  collect.js    # setSilentInfo + prepare (no open) + grace window + deep link
-  config.js     # SDK Key, environment, use case, deep link, grace window
+  collect.js    # setSilentInfo + prepare (no open) + deep link back to the app
+  config.js     # SDK Key, environment, use case, deep link
+  serve.py      # local static server with caching disabled
   UnicoCheckBuilder.min.js  # Web SDK bundle (same pattern as the vanilla POC)
 ```
 
