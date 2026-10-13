@@ -1,9 +1,3 @@
-import {
-  UnicoCheckBuilder,
-  UnicoConfig,
-  SDKEnvironmentTypes,
-  SelfieCameraTypes,
-} from './UnicoCheckBuilder.min.js'
 import config from './config.js'
 
 const statusEl = document.getElementById('status')
@@ -11,8 +5,14 @@ const spinnerEl = document.getElementById('spinner')
 const backButton = document.getElementById('backButton')
 const debugEl = document.getElementById('debug')
 
-const params = new URLSearchParams(window.location.search)
-const externalUserId = params.get('externalUserId') || ''
+// The identifier arrives in the URL fragment and the URL is cleaned BEFORE
+// the SDK bundle loads, so it never reaches server logs, Referer headers or
+// the data collected from the page.
+const externalUserId =
+  new URLSearchParams(window.location.hash.slice(1)).get('externalUserId') ||
+  new URLSearchParams(window.location.search).get('externalUserId') ||
+  ''
+history.replaceState(null, '', window.location.pathname)
 
 
 // Transient network error while verifying the key — worth retrying.
@@ -40,7 +40,8 @@ function finish(status, message) {
   }
 }
 
-async function prepareSilentCapture() {
+async function prepareSilentCapture(sdk) {
+  const { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes, SelfieCameraTypes } = sdk
   const hostname = config.HOSTNAME || window.location.origin
   const unicoConfig = new UnicoConfig()
     .setHostname(hostname)
@@ -65,9 +66,11 @@ async function run() {
   debug(`externalUserId: ${externalUserId}`)
   debug(`useCase: ${config.USE_CASE}`)
 
+  const sdk = await import('./UnicoCheckBuilder.min.js')
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await prepareSilentCapture()
+      await prepareSilentCapture(sdk)
       debug('prepare: ok')
       // Single wait after the prepare: the uMonitor upload (sdk-build) fires
       // a few hundred ms after the prepare resolves, so the page holds this

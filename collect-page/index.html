@@ -52,6 +52,9 @@
       white-space: pre-wrap;
     }
   </style>
+  <!-- Preloads the SDK bundle without executing it: the download happens in
+       parallel while collect.js cleans the identifier from the URL first. -->
+  <link rel="modulepreload" href="./UnicoCheckBuilder.min.js">
 </head>
 <body>
   <div class="spinner" id="spinner"></div>

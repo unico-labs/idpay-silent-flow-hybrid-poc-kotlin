@@ -20,7 +20,7 @@
 
 Scenario: a **native** app opens a web page in **Custom Tabs**, and the device data collection happens on that page:
 
-1. The app opens the `collect-page/` in **Custom Tabs**, passing the `externalUserId` in the URL. The only visible friction is a loading screen.
+1. The app opens the `collect-page/` in **Custom Tabs**, passing the `externalUserId` in the **URL fragment** — the page reads it and strips it from the URL before the SDK loads, so the identifier never reaches server logs or the data collected from the page. The only visible friction is a loading screen.
 2. The page runs the Unico **Web SDK** in silent mode: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **the camera is never opened**. After the prepare resolves, the page waits `POST_PREPARE_WAIT_MS` (2.5s) and returns to the app via deep link (`silentflowhybrid://done`). See **Timing** below.
 3. The app creates an IDPay transaction (`POST /api/public/v1/credit/transaction`) with the **same `externalUserId`** in `additionalInfo.externalUserID`. In a real integration this request is made by the **client's backend** (server-to-server) — the POC shortcuts that hop and calls the API directly.
 4. Result:
@@ -110,7 +110,7 @@ adb reverse tcp:3000 tcp:3000
 
 **4. Test**: fill in the fields (or keep the examples), paste the Bearer token and tap **"Fluxo completo"** (full flow) — Custom Tab with loading → automatic return → transaction → **approved** (green screen) or challenge.
 
-Smoke test of the page without the app: open `http://localhost:3000/?externalUserId=test` in your desktop browser and check the debug panel at the bottom.
+Smoke test of the page without the app: open `http://localhost:3000/#externalUserId=test` in your desktop browser and check the debug panel at the bottom.
 
 ---
 
