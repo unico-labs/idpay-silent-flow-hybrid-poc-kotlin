@@ -1,11 +1,15 @@
 package com.example.silentflowhybrid
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
@@ -46,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlaySpinner: ProgressBar
     private lateinit var overlayIcon: TextView
     private lateinit var overlayText: TextView
+    private lateinit var collectWebView: WebView
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -67,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         overlaySpinner = findViewById(R.id.overlaySpinner)
         overlayIcon = findViewById(R.id.overlayIcon)
         overlayText = findViewById(R.id.overlayText)
+        collectWebView = findViewById(R.id.collectWebView)
 
         findViewById<TextView>(R.id.clearLogButton).setOnClickListener {
             logTextView.text = getString(R.string.logs_placeholder)
@@ -117,23 +123,67 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // The identifier travels in the URL fragment: it never leaves the
+        // browser (fragments are not sent to servers) and the page strips it
+        // before the SDK loads.
         val url = Uri.parse(PocConfig.COLLECT_PAGE_URL)
             .buildUpon()
             .path("/")
-            .appendQueryParameter("externalUserId", externalUserId)
+            .encodedFragment("externalUserId=" + Uri.encode(externalUserId))
             .build()
 
         mainText.text = getString(R.string.status_collect_browser)
-        addLog("collect: opening $url")
-        openInCustomTab(url)
+        if (PocConfig.USE_WEBVIEW) {
+            addLog("collect: opening in WebView $url")
+            openInWebView(url)
+        } else {
+            addLog("collect: opening $url")
+            openInCustomTab(url)
+        }
+    }
+
+    /**
+     * Opens the collect page in an in-app WebView (USE_WEBVIEW experiment).
+     * A WebView does not navigate to custom schemes on its own, so the deep
+     * link back is intercepted in shouldOverrideUrlLoading and routed to the
+     * same handler used by the Custom Tabs path.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun openInWebView(url: Uri) {
+        collectWebView.settings.javaScriptEnabled = true
+        collectWebView.settings.domStorageEnabled = true
+        collectWebView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): Boolean {
+                val target = request?.url ?: return false
+                if (target.scheme == DEEP_LINK_SCHEME) {
+                    closeWebView()
+                    handleCollectResult(target)
+                    return true
+                }
+                return false
+            }
+        }
+        collectWebView.visibility = View.VISIBLE
+        collectWebView.loadUrl(url.toString())
+    }
+
+    private fun closeWebView() {
+        collectWebView.visibility = View.GONE
+        collectWebView.loadUrl("about:blank")
     }
 
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != DEEP_LINK_SCHEME) return
+        handleCollectResult(data)
+    }
 
+    private fun handleCollectResult(data: Uri) {
         val status = data.getQueryParameter("status")
-        addLog("deep link: status=$status")
+        addLog("collect result: status=$status")
 
         when (status) {
             "ok" -> onCollectReturned()

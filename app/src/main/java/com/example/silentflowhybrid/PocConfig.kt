@@ -16,4 +16,9 @@ object PocConfig {
     // a host that is both registered in the SDK Key and a browser secure
     // context (over plain HTTP, only localhost qualifies).
     const val COLLECT_PAGE_URL = "http://localhost:3000"
+
+    // Experiment: open the collect page in an in-app WebView instead of
+    // Custom Tabs. The page and the rest of the flow stay identical — only
+    // the container changes. Set to false to go back to Custom Tabs.
+    const val USE_WEBVIEW = false
 }
