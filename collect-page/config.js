@@ -18,5 +18,5 @@ export default {
 
   // Margin (ms) after the send confirmation, for the backend to process the
   // collection before the transaction is created.
-  POST_SEND_WAIT_MS: 1000,
+  POST_SEND_WAIT_MS: 1500,
 }
