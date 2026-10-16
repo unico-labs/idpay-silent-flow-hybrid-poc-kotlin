@@ -21,13 +21,13 @@
 Scenario: a **native** app opens a web page in **Custom Tabs**, and the device data collection happens on that page:
 
 1. The app opens the `collect-page/` in **Custom Tabs**, passing the `externalUserId` in the **URL fragment** — the page reads it and strips it from the URL before the SDK loads, so the identifier never reaches server logs or the data collected from the page. The only visible friction is a loading screen.
-2. The page runs the Unico **Web SDK** in silent mode: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **the camera is never opened**. After the prepare resolves, the page waits `POST_PREPARE_WAIT_MS` (2.5s) and returns to the app via deep link (`silentflowhybrid://done`). See **Timing** below.
+2. The page runs the Unico **Web SDK** in silent mode: `initializeSDK(unicoConfig)` + `startSilentValidation(externalUserId)` — **the camera is never opened**. The `startSilentValidation` promise resolves once the collection has been **sent**; the page then waits a short processing margin (`POST_SEND_WAIT_MS`, 1.5s) and returns to the app via deep link (`silentflowhybrid://done`). See **Timing** below.
 3. The app creates an IDPay transaction (`POST /api/public/v1/credit/transaction`) with the **same `externalUserId`** in `additionalInfo.externalUserID`. In a real integration this request is made by the **client's backend** (server-to-server) — the POC shortcuts that hop and calls the API directly.
 4. Result:
    - `status: approved` → **silent approval**, with no additional friction (green screen);
    - otherwise → the app automatically opens the challenge `link` (Custom Tabs) and receives the return via deep link.
 
-The **"Fluxo completo"** (full flow) button runs everything in sequence. The collect page is **static** — no npm, no build step: the Web SDK bundle (`UnicoCheckBuilder.min.js`) is committed to the repository, following the same pattern as the [vanilla POC](https://github.com/unico-labs/unico-sdk-poc-js-vanilla).
+The **"Fluxo completo"** (full flow) button runs everything in sequence. The collect page is **static** — no npm, no build step: the Web SDK bundle is imported directly from the npm CDN, pinned to a specific version.
 
 <p align="center">
   <img width="320" src="docs/screenshots/tela-principal.png" alt="POC main screen">
@@ -45,7 +45,8 @@ The **"Fluxo completo"** (full flow) button runs everything in sequence. The col
 
 - **Android:** 7.0 (API level 24) or higher
 - **Kotlin:** 2.2
-- Any static file server for the page (e.g. `python3 -m http.server`)
+- Web SDK `unico-webframe` **3.28+** (provides `initializeSDK`/`startSilentValidation`; the page imports it pinned from the npm CDN)
+- Any static file server for the page (the included `serve.py` is recommended)
 
 ---
 
@@ -58,6 +59,7 @@ This repository **contains no real credentials**. Replace the placeholders:
 | `collect-page/config.js` | `SDK_KEY` | Your **Web SDK Key** (by client mode), registered for the page host and with `silentInfo` sending enabled |
 | `app/.../PocConfig.kt` | `COMPANY_ID` | Your IDPay company UUID |
 | `app/.../PocConfig.kt` | `COLLECT_PAGE_URL` | Where the page is served (default `http://localhost:3000`) |
+| `app/.../PocConfig.kt` | `USE_WEBVIEW` | Container for the collect page: in-app WebView (`true`) or Custom Tabs (`false`) |
 
 The **access token (Bearer)** is **not hardcoded** — paste it into the "Bearer token" field on the screen before running, since it usually has a short lifetime.
 
@@ -67,23 +69,20 @@ To generate Unico credentials, see the [official documentation](https://develope
 
 ## ⏱️ Timing
 
-Count the wait **after the `prepareSelfieCamera` promise resolves**. From that
-point, allow **at least 2.5 seconds** before creating the transaction:
+There is no fixed wait to tune: the `startSilentValidation` promise resolves
+when the collection has been **sent**. Keep only a short margin
+(`collect-page/config.js → POST_SEND_WAIT_MS`, default 1500ms) before creating
+the transaction, so the backend has time to process the collection.
 
-- **~1.5s** for the collection to be sent from the Custom Tab (the page must
-  stay open during this part);
-- the remaining **~1s** for the collection to be processed and become
-  available to the transaction validation.
+The collection stays **valid for 5 minutes**, so it can also be triggered
+earlier in the journey (e.g. when entering the payment screen instead of at
+the confirm tap). In embedded integrations, calling `initializeSDK` as soon
+as the page loads takes it off the critical path entirely — the visible cost
+becomes the `startSilentValidation` call alone.
 
-The POC implements this as a single wait on the page
-(`collect-page/config.js → POST_PREPARE_WAIT_MS`, default 2500ms).
-
-The user can wait less if the collection is triggered **earlier in the
-journey** (e.g. when entering the payment screen instead of at the confirm
-tap) — a collection stays **valid for 5 minutes** after it is generated.
-
-With these numbers, the full episode (open tab → back in the app) takes
-**3 to 5 seconds**, depending on device, network and other factors.
+If the collection fails, the flow degrades gracefully: the transaction is
+created normally and follows the standard visual flow — the silent approval
+is simply not attempted for that transaction.
 
 ---
 
@@ -120,14 +119,18 @@ Smoke test of the page without the app: open `http://localhost:3000/#externalUse
 app/            # Native Android app (opens the page and creates the transaction)
 collect-page/   # Static collect page (Web SDK in silent mode)
   index.html    # Loading + return to the app
-  collect.js    # setSilentInfo + prepare (no open) + deep link back to the app
+  collect.js    # initializeSDK + startSilentValidation + deep link back to the app
   config.js     # SDK Key, environment, use case, deep link
   serve.py      # local static server with caching disabled
-  UnicoCheckBuilder.min.js  # Web SDK bundle (same pattern as the vanilla POC)
 ```
+
+> ⚠️ For simplicity, this POC imports the Web SDK bundle straight from the npm
+> CDN. In a real integration, **download the bundle and serve it from your own
+> infrastructure** (versioned, with a long-lived cache) instead of hot-linking
+> a third-party CDN — you control availability, integrity and rollout.
 
 > The silent flow does not need the SDK's additional resources (the FaceTec
 > files and models from step 4 of the installation guide) — those are only
 > required when the camera is opened for a capture journey.
 
-In production, the `collect-page/` is hosted on an **HTTPS** domain registered for the SDK Key (owned by the client or by Unico) — the app just changes `COLLECT_PAGE_URL`, and the `adb reverse` step goes away.
+In production, the `collect-page/` is hosted on an **HTTPS** domain registered for the SDK Key (owned by the client or by Unico) — the app just changes `COLLECT_PAGE_URL`, and the `adb reverse` step goes away. Serve the SDK bundle with a long-lived cache (versioned filename + `immutable`), so only the user's first validation pays the download.

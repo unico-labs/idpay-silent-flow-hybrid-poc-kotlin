@@ -17,8 +17,7 @@ object PocConfig {
     // context (over plain HTTP, only localhost qualifies).
     const val COLLECT_PAGE_URL = "http://localhost:3000"
 
-    // Experiment: open the collect page in an in-app WebView instead of
-    // Custom Tabs. The page and the rest of the flow stay identical — only
-    // the container changes. Set to false to go back to Custom Tabs.
+    // Container used to open the collect page: in-app WebView (true) or
+    // Custom Tabs (false). The page and the flow are identical in both.
     const val USE_WEBVIEW = false
 }
