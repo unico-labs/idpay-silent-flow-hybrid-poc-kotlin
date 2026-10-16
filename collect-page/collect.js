@@ -5,22 +5,20 @@ const spinnerEl = document.getElementById('spinner')
 const backButton = document.getElementById('backButton')
 const debugEl = document.getElementById('debug')
 
-// The identifier arrives in the URL fragment and the URL is cleaned BEFORE
-// the SDK bundle loads, so it never reaches server logs, Referer headers or
-// the data collected from the page.
+// The identifier comes in the URL fragment and is stripped before the SDK
+// bundle loads, so it never reaches server logs or the collected data.
 const externalUserId =
   new URLSearchParams(window.location.hash.slice(1)).get('externalUserId') ||
   new URLSearchParams(window.location.search).get('externalUserId') ||
   ''
 history.replaceState(null, '', window.location.pathname)
 
-
-// Transient network error while verifying the key — worth retrying.
-const RETRYABLE_CODE = 73402
-const MAX_ATTEMPTS = 3
-
 function debug(message) {
   debugEl.textContent += `${message}\n`
+}
+
+function hold(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function deepLink(status) {
@@ -40,24 +38,6 @@ function finish(status, message) {
   }
 }
 
-async function prepareSilentCapture(sdk) {
-  const { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes, SelfieCameraTypes } = sdk
-  const hostname = config.HOSTNAME || window.location.origin
-  const unicoConfig = new UnicoConfig()
-    .setHostname(hostname)
-    .setHostKey(config.SDK_KEY)
-
-  const camera = new UnicoCheckBuilder()
-    .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
-    .build()
-
-  camera.setSilentInfo(externalUserId, config.USE_CASE)
-
-  // prepare only — open() is never called, so no camera is shown. The SDK
-  // sends the hashed externalUserId with the device collection in background.
-  await camera.prepareSelfieCamera(unicoConfig, SelfieCameraTypes.SMART)
-}
-
 async function run() {
   if (!externalUserId) {
     finish('error', 'externalUserId ausente na URL.')
@@ -66,30 +46,33 @@ async function run() {
   debug(`externalUserId: ${externalUserId}`)
   debug(`useCase: ${config.USE_CASE}`)
 
-  const sdk = await import('./UnicoCheckBuilder.min.js')
+  const { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes } =
+    await import('https://cdn.jsdelivr.net/npm/unico-webframe@3.28.2/obfuscated/dist/UnicoCheck.esm.js')
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      await prepareSilentCapture(sdk)
-      debug('prepare: ok')
-      // Single wait after the prepare: the uMonitor upload (sdk-build) fires
-      // a few hundred ms after the prepare resolves, so the page holds this
-      // window before returning to the app.
-      debug(`holding ${config.POST_PREPARE_WAIT_MS}ms before returning`)
-      await new Promise((resolve) => setTimeout(resolve, config.POST_PREPARE_WAIT_MS))
+  const unicoConfig = new UnicoConfig()
+    .setHostname(config.HOSTNAME || window.location.origin)
+    .setHostKey(config.SDK_KEY)
 
-      finish('ok', 'Tudo certo! Voltando ao app…')
-      return
-    } catch (error) {
-      const detail = `${error?.code ?? ''} ${error?.message ?? error}`.trim()
-      debug(`prepare attempt ${attempt}: ${detail}`)
-      if (error?.code !== RETRYABLE_CODE || attempt === MAX_ATTEMPTS) {
-        finish('error', `Não foi possível validar o dispositivo. (${detail})`)
-        return
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-    }
+  const camera = new UnicoCheckBuilder()
+    .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
+    .build()
+
+  try {
+    await camera.initializeSDK(unicoConfig)
+    debug('initializeSDK: ok')
+
+    // Resolves once the collection has been sent.
+    await camera.startSilentValidation(externalUserId, config.USE_CASE)
+    debug('collection sent')
+  } catch (error) {
+    const detail = `${error?.code ?? ''} ${error?.message ?? error}`.trim()
+    debug(`silent validation failed: ${detail}`)
+    finish('error', `Não foi possível coletar os dados do dispositivo. (${detail})`)
+    return
   }
+
+  await hold(config.POST_SEND_WAIT_MS)
+  finish('ok', 'Tudo certo! Voltando ao app…')
 }
 
 run()

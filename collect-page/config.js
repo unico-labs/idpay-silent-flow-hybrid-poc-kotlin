@@ -16,8 +16,7 @@ export default {
   // Deep link that returns control to the native app.
   DEEP_LINK: 'silentflowhybrid://done',
 
-  // Single wait (ms) after the prepare resolves, before returning to the
-  // app. It's important to upload collect after the prepare,
-  // so the page holds this window for it to leave.
-  POST_PREPARE_WAIT_MS: 2500,
+  // Margin (ms) after the send confirmation, for the backend to process the
+  // collection before the transaction is created.
+  POST_SEND_WAIT_MS: 1000,
 }
