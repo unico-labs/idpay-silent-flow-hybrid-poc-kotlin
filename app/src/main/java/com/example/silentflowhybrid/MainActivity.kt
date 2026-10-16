@@ -142,12 +142,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Opens the collect page in an in-app WebView (USE_WEBVIEW experiment).
-     * A WebView does not navigate to custom schemes on its own, so the deep
-     * link back is intercepted in shouldOverrideUrlLoading and routed to the
-     * same handler used by the Custom Tabs path.
-     */
+    // A WebView does not navigate to custom schemes on its own: the deep link
+    // back is intercepted in shouldOverrideUrlLoading and routed to the same
+    // handler used by the Custom Tabs path.
     @SuppressLint("SetJavaScriptEnabled")
     private fun openInWebView(url: Uri) {
         collectWebView.settings.javaScriptEnabled = true

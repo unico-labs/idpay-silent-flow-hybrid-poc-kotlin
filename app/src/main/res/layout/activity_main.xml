@@ -323,8 +323,7 @@
             android:gravity="center" />
     </LinearLayout>
 
-    <!-- In-app WebView for the collect page (PocConfig.USE_WEBVIEW experiment).
-         Shown full screen instead of opening Custom Tabs. -->
+    <!-- Collect page container when PocConfig.USE_WEBVIEW is enabled. -->
     <WebView
         android:id="@+id/collectWebView"
         android:layout_width="match_parent"
