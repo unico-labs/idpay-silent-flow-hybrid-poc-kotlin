@@ -5,20 +5,26 @@ const spinnerEl = document.getElementById('spinner')
 const backButton = document.getElementById('backButton')
 const debugEl = document.getElementById('debug')
 
-// The identifier comes in the URL fragment and is stripped before the SDK
-// bundle loads, so it never reaches server logs or the collected data.
-const externalUserId =
+// Custom Tabs: the identifier comes in the URL fragment and is stripped before
+// the SDK bundle loads, so it never reaches server logs or the collected data.
+// Preloaded WebView: there is no identifier yet — the app passes it to
+// collect() when the user taps.
+let externalUserId =
   new URLSearchParams(window.location.hash.slice(1)).get('externalUserId') ||
   new URLSearchParams(window.location.search).get('externalUserId') ||
   ''
 history.replaceState(null, '', window.location.pathname)
 
+// Exposed by the app only in the preloaded WebView. Without it (Custom Tabs),
+// the page returns to the app via deep link.
+const bridge = window.CollectBridge
+
 function debug(message) {
   debugEl.textContent += `${message}\n`
 }
 
-function hold(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function describe(error) {
+  return `${error?.code ?? ''} ${error?.message ?? error}`.trim()
 }
 
 function deepLink(status) {
@@ -31,23 +37,19 @@ function finish(status, message) {
   statusEl.textContent = message
   backButton.href = deepLink(status)
   backButton.style.display = 'inline-block'
-  if (status === 'ok') {
-    // The browser may block automatic redirects to custom schemes without a
-    // user gesture — the "back to app" button covers that case.
-    window.location.href = deepLink('ok')
-  }
+  // The browser may block automatic redirects to custom schemes without a
+  // user gesture — the "back to app" button covers that case.
+  window.location.href = deepLink(status)
 }
 
-async function run() {
-  if (!externalUserId) {
-    finish('error', 'externalUserId ausente na URL.')
-    return
+async function prepare() {
+  let sdk
+  try {
+    sdk = await import(config.SDK_BUNDLE_URL)
+  } catch (error) {
+    throw new Error(`SDK bundle failed to load: ${error?.message ?? error}`)
   }
-  debug(`externalUserId: ${externalUserId}`)
-  debug(`useCase: ${config.USE_CASE}`)
-
-  const { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes } =
-    await import('https://cdn.jsdelivr.net/npm/unico-webframe@3.28.2/obfuscated/dist/UnicoCheck.esm.js')
+  const { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes } = sdk
 
   const unicoConfig = new UnicoConfig()
     .setHostname(config.HOSTNAME || window.location.origin)
@@ -57,22 +59,53 @@ async function run() {
     .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
     .build()
 
-  try {
-    await camera.initializeSDK(unicoConfig)
-    debug('initializeSDK: ok')
+  await camera.initializeSDK(unicoConfig)
+  debug('initializeSDK: ok')
+  return camera
+}
 
+function report(status, message, detail = '') {
+  if (bridge) bridge.onResult(status, detail)
+  else finish(status, message)
+}
+
+// The SDK prepares as soon as the page loads: by the time collect() is called,
+// only the send is left.
+const prepared = prepare()
+prepared.then(
+  () => bridge?.onReady(),
+  (error) => bridge?.onPrepareFailed(describe(error)),
+)
+
+let collecting = false
+
+async function collect(id) {
+  if (collecting) return
+  collecting = true
+
+  externalUserId = id
+  if (!externalUserId) {
+    report('error', 'externalUserId ausente.', 'missing externalUserId')
+    return
+  }
+  debug(`externalUserId: ${externalUserId}`)
+  debug(`useCase: ${config.USE_CASE}`)
+
+  try {
+    const camera = await prepared
     // Resolves once the collection has been sent.
     await camera.startSilentValidation(externalUserId, config.USE_CASE)
     debug('collection sent')
   } catch (error) {
-    const detail = `${error?.code ?? ''} ${error?.message ?? error}`.trim()
+    const detail = describe(error)
     debug(`silent validation failed: ${detail}`)
-    finish('error', `Não foi possível coletar os dados do dispositivo. (${detail})`)
+    report('error', `Não foi possível coletar os dados do dispositivo. (${detail})`, detail)
     return
   }
 
-  await hold(config.POST_SEND_WAIT_MS)
-  finish('ok', 'Tudo certo! Voltando ao app…')
+  report('ok', 'Tudo certo! Voltando ao app…')
 }
 
-run()
+window.collect = collect
+
+if (externalUserId) collect(externalUserId)

@@ -52,6 +52,9 @@
       white-space: pre-wrap;
     }
   </style>
+  <!-- Opens the connection to the SDK backend (UAT; adjust per environment)
+       while the page loads, so the first SDK request skips DNS + TLS. -->
+  <link rel="preconnect" href="https://backend-sdk.uat.private.unico.run" crossorigin>
   <!-- Preloads the SDK bundle without executing it: the download happens in
        parallel while collect.js cleans the identifier from the URL first. -->
   <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/unico-webframe@3.28.2/obfuscated/dist/UnicoCheck.esm.js" integrity="sha384-E3CygwvAlJnP/dG3vKHqOsYHOs/mcv1eIr4wrUnXp4rU0WnUI7WSMW43RwVOvdUb" crossorigin>

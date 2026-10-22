@@ -17,7 +17,8 @@ object PocConfig {
     // context (over plain HTTP, only localhost qualifies).
     const val COLLECT_PAGE_URL = "http://localhost:3000"
 
-    // Container used to open the collect page: in-app WebView (true) or
-    // Custom Tabs (false). The page and the flow are identical in both.
-    const val USE_WEBVIEW = false
+    // Container for the collect page: a hidden WebView preloaded when the
+    // screen opens (true — the SDK is ready before the tap) or Custom Tabs
+    // opened at the tap (false).
+    const val USE_WEBVIEW = true
 }
