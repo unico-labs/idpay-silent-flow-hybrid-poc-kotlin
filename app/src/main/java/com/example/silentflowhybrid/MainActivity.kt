@@ -7,9 +7,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
+import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
@@ -26,16 +30,19 @@ import java.util.Locale
 import org.json.JSONObject
 
 /**
- * IDPay Silent Flow Hybrid POC: the native app opens a web page (collect-page/)
- * in Custom Tabs, and the device data collection happens on that page — the
- * Unico web SDK runs silently (no camera) and returns via deep link. The app
- * then creates an IDPay transaction that is approved silently when the
- * collected device matches the user history.
+ * IDPay Silent Flow Hybrid POC: the device data collection happens on a web
+ * page (collect-page/) — the Unico web SDK runs silently (no camera) and
+ * returns via deep link. By default the page is preloaded in a hidden WebView
+ * so the SDK is ready before the user taps; Custom Tabs is the alternative.
+ * The app then creates an IDPay transaction that is approved silently when
+ * the collected device matches the user history.
  */
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val DEEP_LINK_SCHEME = "silentflowhybrid"
+        private const val STATUS_CHALLENGE_FINISHED = "challenge-finished"
+        private const val PREPARE_RETRY_MS = 3_000L
     }
 
     private lateinit var mainText: TextView
@@ -50,11 +57,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlaySpinner: ProgressBar
     private lateinit var overlayIcon: TextView
     private lateinit var overlayText: TextView
-    private lateinit var collectWebView: WebView
+    private lateinit var root: FrameLayout
+    private var collectWebView: WebView? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var runTransactionAfterCollect = false
+
+    private val collectPageUrl: Uri =
+        Uri.parse(PocConfig.COLLECT_PAGE_URL).buildUpon().path("/").build()
+    private var collectPageReady = false
+    private var collecting = false
+    private var pendingExternalUserId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,13 +86,21 @@ class MainActivity : AppCompatActivity() {
         overlaySpinner = findViewById(R.id.overlaySpinner)
         overlayIcon = findViewById(R.id.overlayIcon)
         overlayText = findViewById(R.id.overlayText)
-        collectWebView = findViewById(R.id.collectWebView)
+        root = findViewById(R.id.root)
 
         findViewById<TextView>(R.id.clearLogButton).setOnClickListener {
             logTextView.text = getString(R.string.logs_placeholder)
         }
 
+        if (PocConfig.USE_WEBVIEW) preloadWebView()
+
         handleDeepLink(intent)
+    }
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        discardWebView()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -110,11 +132,6 @@ class MainActivity : AppCompatActivity() {
         externalUserIdInput.text.toString().trim()
             .ifEmpty { cpfInput.text.toString().trim() }
 
-    /**
-     * Opens the collect page in Custom Tabs. The page runs the web SDK
-     * silently, waits the upload grace window and returns via deep link — so
-     * when status=ok arrives here, the device data has already left.
-     */
     private fun startCollect() {
         val externalUserId = resolveExternalUserId()
         if (externalUserId.isEmpty()) {
@@ -123,6 +140,37 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (PocConfig.USE_WEBVIEW) {
+            collectInWebView(externalUserId)
+        } else {
+            collectInCustomTab(externalUserId)
+        }
+    }
+
+    /**
+     * The SDK is already prepared on the hidden page, so only the send is
+     * left. A tap during the prepare waits for it to finish.
+     */
+    private fun collectInWebView(externalUserId: String) {
+        collecting = true
+        mainText.text = getString(R.string.status_collect_silent)
+        showOverlayProcessing(getString(R.string.overlay_collecting))
+
+        if (collectPageReady) {
+            sendCollect(externalUserId)
+        } else {
+            pendingExternalUserId = externalUserId
+            if (collectWebView == null) preloadWebView()
+        }
+    }
+
+    private fun sendCollect(externalUserId: String) {
+        pendingExternalUserId = null
+        // JSONObject.quote escapes the identifier as a JS string literal.
+        collectWebView?.evaluateJavascript("window.collect(${JSONObject.quote(externalUserId)})", null)
+    }
+
+    private fun collectInCustomTab(externalUserId: String) {
         // The identifier travels in the URL fragment: it never leaves the
         // browser (fragments are not sent to servers) and the page strips it
         // before the SDK loads.
@@ -131,72 +179,133 @@ class MainActivity : AppCompatActivity() {
             .path("/")
             .encodedFragment("externalUserId=" + Uri.encode(externalUserId))
             .build()
-
         mainText.text = getString(R.string.status_collect_browser)
-        if (PocConfig.USE_WEBVIEW) {
-            addLog("collect: opening in WebView $url")
-            openInWebView(url)
-        } else {
-            addLog("collect: opening $url")
-            openInCustomTab(url)
-        }
+        addLog("collect: opening $url")
+        openInCustomTab(url)
     }
 
-    // A WebView does not navigate to custom schemes on its own: the deep link
-    // back is intercepted in shouldOverrideUrlLoading and routed to the same
-    // handler used by the Custom Tabs path.
+    /**
+     * Loads the collect page in a hidden WebView ahead of the tap: the SDK
+     * prepares while the user is still on the screen. One SDK session serves
+     * one validation, so a fresh page is loaded after each collection.
+     */
+    private fun preloadWebView() {
+        mainHandler.removeCallbacks(retryPreload)
+        collectPageReady = false
+        val webView = collectWebView ?: createWebView().also { collectWebView = it }
+        webView.loadUrl(collectPageUrl.toString())
+    }
+
+    private val retryPreload = Runnable { preloadWebView() }
+
+    // INVISIBLE (not GONE) keeps the full-screen size the SDK reads for the
+    // device fingerprint.
     @SuppressLint("SetJavaScriptEnabled")
-    private fun openInWebView(url: Uri) {
-        collectWebView.settings.javaScriptEnabled = true
-        collectWebView.settings.domStorageEnabled = true
-        collectWebView.webViewClient = object : WebViewClient() {
+    private fun createWebView(): WebView {
+        val webView = WebView(this)
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.visibility = View.INVISIBLE
+        webView.addJavascriptInterface(CollectBridge(), "CollectBridge")
+        webView.webViewClient = object : WebViewClient() {
+            // The bridge is exposed to whatever page is loaded: keep the
+            // WebView on the collect page origin.
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?,
             ): Boolean {
-                val target = request?.url ?: return false
-                if (target.scheme == DEEP_LINK_SCHEME) {
-                    closeWebView()
-                    handleCollectResult(target)
-                    return true
-                }
-                return false
+                val target = request?.url ?: return true
+                return target.scheme != collectPageUrl.scheme ||
+                    target.authority != collectPageUrl.authority
+            }
+
+            // The page renderer runs in a separate process that the system
+            // may kill (e.g. low memory). Without this, the app crashes too.
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?,
+            ): Boolean {
+                addLog("collect: WebView renderer gone, reloading")
+                discardWebView()
+                if (collecting) onCollectFailed()
+                preloadWebView()
+                return true
             }
         }
-        collectWebView.visibility = View.VISIBLE
-        collectWebView.loadUrl(url.toString())
+        root.addView(
+            webView,
+            0,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        return webView
     }
 
-    private fun closeWebView() {
-        collectWebView.visibility = View.GONE
-        collectWebView.loadUrl("about:blank")
+    private fun discardWebView() {
+        val webView = collectWebView ?: return
+        collectWebView = null
+        collectPageReady = false
+        root.removeView(webView)
+        webView.destroy()
+    }
+
+    /** Events from the collect page, called on a WebView background thread. */
+    private inner class CollectBridge {
+        @JavascriptInterface
+        fun onReady() = runOnUiThread {
+            collectPageReady = true
+            pendingExternalUserId?.let { sendCollect(it) }
+        }
+
+        @JavascriptInterface
+        fun onPrepareFailed(detail: String) = runOnUiThread {
+            addLog("collect: SDK prepare failed ($detail), retrying")
+            if (collecting) onCollectFailed()
+            mainHandler.postDelayed(retryPreload, PREPARE_RETRY_MS)
+        }
+
+        @JavascriptInterface
+        fun onResult(status: String, detail: String) = runOnUiThread {
+            if (detail.isNotEmpty()) addLog("collect: $detail")
+            onCollectResult(status)
+            preloadWebView()
+        }
     }
 
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != DEEP_LINK_SCHEME) return
-        handleCollectResult(data)
-    }
 
-    private fun handleCollectResult(data: Uri) {
         val status = data.getQueryParameter("status")
-        addLog("collect result: status=$status")
-
-        when (status) {
-            "ok" -> onCollectReturned()
-            "error" -> {
-                mainText.text = getString(R.string.status_collect_failed)
-                runTransactionAfterCollect = false
-            }
+        if (status == STATUS_CHALLENGE_FINISHED) {
+            addLog("challenge finished — back in the app")
+        } else {
+            onCollectResult(status)
         }
     }
 
+    private fun onCollectResult(status: String?) {
+        addLog("collect result: status=$status")
+        if (status == "ok") onCollectReturned() else onCollectFailed()
+    }
+
+    private fun onCollectFailed() {
+        collecting = false
+        pendingExternalUserId = null
+        runTransactionAfterCollect = false
+        hideOverlay()
+        mainText.text = getString(R.string.status_collect_failed)
+    }
+
     /**
-     * The collect page returned: the prepare succeeded and the page already
-     * held the post-prepare wait — the collection is sent and processed, so
-     * the transaction can be created right away.
+     * The collection has been sent, so the transaction can be created right
+     * away.
      */
     private fun onCollectReturned() {
+        collecting = false
+        hideOverlay()
         val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
         mainText.text = getString(R.string.status_collect_ready, ts)
 
@@ -235,7 +344,7 @@ class MainActivity : AppCompatActivity() {
             .put("identity", JSONObject().put("key", "cpf").put("value", cpf))
             .put("orderNumber", "silent-flow-hybrid-poc-${System.currentTimeMillis()}")
             .put("company", PocConfig.COMPANY_ID)
-            .put("redirectUrl", "silentflowhybrid://done?status=challenge-finished")
+            .put("redirectUrl", "$DEEP_LINK_SCHEME://done?status=$STATUS_CHALLENGE_FINISHED")
             .put(
                 "card",
                 JSONObject()
@@ -311,7 +420,10 @@ class MainActivity : AppCompatActivity() {
 
     // --------------------------------------------------------------- overlay
 
+    private val hideOverlayRunnable = Runnable { hideOverlay() }
+
     private fun showOverlayProcessing(message: String) {
+        mainHandler.removeCallbacks(hideOverlayRunnable)
         overlay.setBackgroundColor(ContextCompat.getColor(this, R.color.unico_dark_navy))
         overlaySpinner.visibility = View.VISIBLE
         overlayIcon.visibility = View.GONE
@@ -328,7 +440,7 @@ class MainActivity : AppCompatActivity() {
         overlayText.text = getString(R.string.overlay_approved)
         overlay.setOnClickListener { hideOverlay() }
         overlay.visibility = View.VISIBLE
-        mainHandler.postDelayed({ hideOverlay() }, 3_000)
+        mainHandler.postDelayed(hideOverlayRunnable, 3_000)
     }
 
     private fun hideOverlay() {

@@ -7,6 +7,10 @@ export default {
   // Optional hostname override sent to the SDK. Empty = window.location.origin.
   HOSTNAME: '',
 
+  // Web SDK bundle. Real integrations should serve it from their own
+  // infrastructure (versioned, long-lived cache) instead of a public CDN.
+  SDK_BUNDLE_URL: 'https://cdn.jsdelivr.net/npm/unico-webframe@3.28.2/obfuscated/dist/UnicoCheck.esm.js',
+
   // DEV | UAT | PROD
   SDK_ENVIRONMENT: 'UAT',
 
@@ -15,8 +19,4 @@ export default {
 
   // Deep link that returns control to the native app.
   DEEP_LINK: 'silentflowhybrid://done',
-
-  // Margin (ms) after the send confirmation, for the backend to process the
-  // collection before the transaction is created.
-  POST_SEND_WAIT_MS: 1500,
 }
